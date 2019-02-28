@@ -24,6 +24,7 @@ import android.accounts.Account;
 import android.app.SearchManager;
 import android.content.ContentProvider;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.UriMatcher;
 import android.database.Cursor;
 import android.database.MatrixCursor;
@@ -84,6 +85,7 @@ public class UsersAndGroupsSearchProvider extends ContentProvider {
     static String DATA_GROUP;
     static String DATA_ROOM;
     static String DATA_REMOTE;
+    static String DATA_EMAIL;
 
     private UriMatcher mUriMatcher;
 
@@ -113,15 +115,17 @@ public class UsersAndGroupsSearchProvider extends ContentProvider {
         DATA_GROUP = AUTHORITY + ".data.group";
         DATA_ROOM = AUTHORITY + ".data.room";
         DATA_REMOTE = AUTHORITY + ".data.remote";
+        DATA_EMAIL = AUTHORITY + ".data.email";
 
         sShareTypes.put(DATA_USER, ShareType.USER);
         sShareTypes.put(DATA_GROUP, ShareType.GROUP);
         sShareTypes.put(DATA_ROOM, ShareType.ROOM);
         sShareTypes.put(DATA_REMOTE, ShareType.FEDERATED);
-        sShareTypes.put(DATA_REMOTE, ShareType.EMAIL);
+        sShareTypes.put(DATA_EMAIL, ShareType.EMAIL);
 
         mUriMatcher = new UriMatcher(UriMatcher.NO_MATCH);
         mUriMatcher.addURI(AUTHORITY, SearchManager.SUGGEST_URI_PATH_QUERY + "/*", SEARCH);
+
         return true;
     }
 
@@ -158,11 +162,21 @@ public class UsersAndGroupsSearchProvider extends ContentProvider {
     private Cursor searchForUsersOrGroups(Uri uri) {
         MatrixCursor response = null;
 
-        String userQuery = uri.getLastPathSegment().toLowerCase(Locale.ROOT);
+        String lastPathSegment = uri.getLastPathSegment();
+
+        if (lastPathSegment == null) {
+            throw new IllegalArgumentException("Wrong URI passed!");
+        }
+
+        String userQuery = lastPathSegment.toLowerCase(Locale.ROOT);
 
         // need to trust on the AccountUtils to get the current account since the query in the client side is not
         // directly started by our code, but from SearchView implementation
         Account account = AccountUtils.getCurrentOwnCloudAccount(getContext());
+
+        if (account == null) {
+            throw new IllegalArgumentException("Account may not be null!");
+        }
 
         // request to the OC server about users and groups matching userQuery
         GetRemoteShareesOperation searchRequest = new GetRemoteShareesOperation(
@@ -193,6 +207,11 @@ public class UsersAndGroupsSearchProvider extends ContentProvider {
             Uri groupBaseUri = new Uri.Builder().scheme(CONTENT).authority(DATA_GROUP).build();
             Uri roomBaseUri = new Uri.Builder().scheme(CONTENT).authority(DATA_ROOM).build();
             Uri remoteBaseUri = new Uri.Builder().scheme(CONTENT).authority(DATA_REMOTE).build();
+            Uri emailBaseUri = new Uri.Builder().scheme(CONTENT).authority(DATA_EMAIL).build();
+
+            if (getContext() == null) {
+                throw new IllegalArgumentException("Context may not be null!");
+            }
 
             FileDataStorageManager manager = new FileDataStorageManager(account, getContext().getContentResolver());
             boolean federatedShareAllowed = manager.getCapability(account.name).getFilesSharingFederationOutgoing()
@@ -239,7 +258,7 @@ public class UsersAndGroupsSearchProvider extends ContentProvider {
                         case EMAIL:
                             icon = R.drawable.ic_email;
                             displayName = getContext().getString(R.string.share_email_clarification, userName);
-                            dataUri = Uri.withAppendedPath(remoteBaseUri, shareWith);
+                            dataUri = Uri.withAppendedPath(emailBaseUri, shareWith);
                             break;
 
                         case ROOM:
@@ -292,17 +311,20 @@ public class UsersAndGroupsSearchProvider extends ContentProvider {
      */
     private void showErrorMessage(final RemoteOperationResult result) {
         Handler handler = new Handler(Looper.getMainLooper());
-        handler.post(new Runnable() {
-            @Override
-            public void run() {
-                // The Toast must be shown in the main thread to grant that will be hidden correctly; otherwise
-                // the thread may die before, an exception will occur, and the message will be left on the screen
-                // until the app dies
+        handler.post(() -> {
+            // The Toast must be shown in the main thread to grant that will be hidden correctly; otherwise
+            // the thread may die before, an exception will occur, and the message will be left on the screen
+            // until the app dies
 
-                Toast.makeText(getContext().getApplicationContext(),
-                        ErrorMessageAdapter.getErrorCauseMessage(result, null, getContext().getResources()),
-                        Toast.LENGTH_SHORT).show();
+            Context context = getContext();
+
+            if (context == null) {
+                throw new IllegalArgumentException("Context may not be null!");
             }
+
+            Toast.makeText(getContext().getApplicationContext(),
+                           ErrorMessageAdapter.getErrorCauseMessage(result, null, getContext().getResources()),
+                           Toast.LENGTH_SHORT).show();
         });
     }
 }
