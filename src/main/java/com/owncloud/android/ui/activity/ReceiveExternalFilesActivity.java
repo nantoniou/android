@@ -55,6 +55,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ListAdapter;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.Spinner;
@@ -301,7 +302,7 @@ public class ReceiveExternalFilesActivity extends FileActivity
             mAccountListAdapter = new AccountListAdapter(parent, getAccountListItems(parent), mTintedCheck);
 
             builder.setTitle(R.string.common_choose_account);
-            builder.setAdapter(mAccountListAdapter, (dialog, which) -> {
+            builder.setAdapter((ListAdapter) mAccountListAdapter, (dialog, which) -> {
                 final ReceiveExternalFilesActivity parent1 = (ReceiveExternalFilesActivity) getActivity();
                 parent1.setAccount(parent1.mAccountManager.getAccountsByType(
                         MainApp.getAccountType(getActivity()))[which], false);
