@@ -4,9 +4,11 @@
  * @author Bartek Przybylski
  * @author David A. Velasco
  * @author Andy Scherzinger
+ * @author Chris Narkiewicz
  * Copyright (C) 2011  Bartek Przybylski
  * Copyright (C) 2016 ownCloud Inc.
  * Copyright (C) 2018 Andy Scherzinger
+ * Copyright (C) 2019 Chris Narkiewicz <hello@ezaquarii.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2,
@@ -56,6 +58,7 @@ import android.widget.ImageView;
 
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.google.android.material.snackbar.Snackbar;
+import com.nextcloud.client.account.UserAccountManager;
 import com.nextcloud.client.di.Injectable;
 import com.owncloud.android.MainApp;
 import com.owncloud.android.R;
@@ -64,7 +67,7 @@ import com.owncloud.android.datamodel.FileDataStorageManager;
 import com.owncloud.android.datamodel.OCFile;
 import com.owncloud.android.datamodel.VirtualFolderType;
 import com.nextcloud.client.preferences.AppPreferences;
-import com.nextcloud.client.preferences.PreferenceManager;
+import com.nextcloud.client.preferences.AppPreferencesImpl;
 import com.owncloud.android.files.services.FileDownloader;
 import com.owncloud.android.files.services.FileDownloader.FileDownloaderBinder;
 import com.owncloud.android.files.services.FileUploader;
@@ -150,7 +153,7 @@ import androidx.fragment.app.FragmentTransaction;
  * Displays, what files the user has available in his ownCloud. This is the main view.
  */
 
-public class FileDisplayActivity extends HookActivity
+public class FileDisplayActivity extends FileActivity
         implements FileFragment.ContainerActivity,
         OnEnforceableRefreshListener, SortingOrderDialogFragment.OnSortingOrderListener,
         SendShareDialog.SendShareDialogDownloader, Injectable {
@@ -210,8 +213,8 @@ public class FileDisplayActivity extends HookActivity
     private boolean searchOpen;
 
     private SearchView searchView;
-    @Inject
-    AppPreferences preferences;
+    @Inject AppPreferences preferences;
+    @Inject UserAccountManager accountManager;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -353,7 +356,7 @@ public class FileDisplayActivity extends HookActivity
             ArbitraryDataProvider arbitraryDataProvider = new ArbitraryDataProvider(getContentResolver());
 
             int lastSeenVersion = arbitraryDataProvider.getIntegerValue(account,
-                    PreferenceManager.AUTO_PREF__LAST_SEEN_VERSION_CODE);
+                                                                        AppPreferencesImpl.AUTO_PREF__LAST_SEEN_VERSION_CODE);
 
             if (MainApp.getVersionCode() > lastSeenVersion) {
                 OwnCloudVersion serverVersion = AccountUtils.getServerVersionForAccount(account, this);
@@ -366,8 +369,8 @@ public class FileDisplayActivity extends HookActivity
                     DisplayUtils.showServerOutdatedSnackbar(this);
                 }
 
-                arbitraryDataProvider.storeOrUpdateKeyValue(account.name, PreferenceManager.AUTO_PREF__LAST_SEEN_VERSION_CODE,
-                        String.valueOf(MainApp.getVersionCode()));
+                arbitraryDataProvider.storeOrUpdateKeyValue(account.name, AppPreferencesImpl.AUTO_PREF__LAST_SEEN_VERSION_CODE,
+                                                            String.valueOf(MainApp.getVersionCode()));
             }
         }
     }
@@ -2567,9 +2570,9 @@ public class FileDisplayActivity extends HookActivity
     @Subscribe(threadMode = ThreadMode.BACKGROUND)
     public void onMessageEvent(TokenPushEvent event) {
         if (!preferences.isKeysReInitEnabled()) {
-            PushUtils.reinitKeys();
+            PushUtils.reinitKeys(accountManager);
         } else {
-            PushUtils.pushRegistrationToServer(preferences.getPushToken());
+            PushUtils.pushRegistrationToServer(accountManager, preferences.getPushToken());
         }
     }
 

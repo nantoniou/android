@@ -3,7 +3,9 @@
  *
  * @author masensio
  * @author David A. Velasco
+ * @author Chris Narkiewicz
  * Copyright (C) 2015 ownCloud Inc.
+ * Copyright (C) 2019 Chris Narkiewicz <hello@ezaquarii.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2,
@@ -26,6 +28,8 @@ import android.app.Activity;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.ContentProvider;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
@@ -40,10 +44,11 @@ import android.view.WindowManager;
 
 import com.evernote.android.job.JobManager;
 import com.evernote.android.job.JobRequest;
+import com.nextcloud.client.account.UserAccountManager;
 import com.nextcloud.client.di.ActivityInjector;
 import com.nextcloud.client.di.DaggerAppComponent;
 import com.nextcloud.client.preferences.AppPreferences;
-import com.nextcloud.client.preferences.PreferenceManager;
+import com.nextcloud.client.preferences.AppPreferencesImpl;
 import com.owncloud.android.authentication.AccountUtils;
 import com.owncloud.android.authentication.PassCodeManager;
 import com.owncloud.android.datamodel.ArbitraryDataProvider;
@@ -89,6 +94,8 @@ import androidx.multidex.MultiDexApplication;
 import dagger.android.AndroidInjector;
 import dagger.android.DispatchingAndroidInjector;
 import dagger.android.HasActivityInjector;
+import dagger.android.HasBroadcastReceiverInjector;
+import dagger.android.HasContentProviderInjector;
 import dagger.android.HasServiceInjector;
 import dagger.android.support.HasSupportFragmentInjector;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -105,7 +112,9 @@ import static com.owncloud.android.ui.activity.ContactsPreferenceActivity.PREFER
 public class MainApp extends MultiDexApplication implements
     HasActivityInjector,
     HasSupportFragmentInjector,
-    HasServiceInjector {
+    HasServiceInjector,
+    HasContentProviderInjector,
+    HasBroadcastReceiverInjector {
 
     public static final OwnCloudVersion OUTDATED_SERVER_VERSION = OwnCloudVersion.nextcloud_14;
     public static final OwnCloudVersion MINIMUM_SUPPORTED_SERVER_VERSION = OwnCloudVersion.nextcloud_12;
@@ -137,24 +146,37 @@ public class MainApp extends MultiDexApplication implements
     @Inject
     DispatchingAndroidInjector<Service> dispatchingServiceInjector;
 
+    @Inject
+    DispatchingAndroidInjector<ContentProvider> dispatchingContentProviderInjector;
+
+    @Inject
+    DispatchingAndroidInjector<BroadcastReceiver> dispatchingBroadcastReceiverInjector;
+
+    @Inject
+    UserAccountManager accountManager;
+
     private PassCodeManager passCodeManager;
 
     @SuppressWarnings("unused")
     private boolean mBound;
+
+    @Override
+    protected void attachBaseContext(Context base) {
+        super.attachBaseContext(base);
+        DaggerAppComponent.builder()
+            .application(this)
+            .build()
+            .inject(this);
+    }
 
     @SuppressFBWarnings("ST")
     @Override
     public void onCreate() {
         super.onCreate();
 
-        DaggerAppComponent.builder()
-            .application(this)
-            .build()
-            .inject(this);
-
         registerActivityLifecycleCallbacks(new ActivityInjector());
 
-        JobManager.create(this).addJobCreator(new NCJobCreator());
+        JobManager.create(this).addJobCreator(new NCJobCreator(getApplicationContext(), accountManager, preferences));
         MainApp.mContext = getApplicationContext();
 
         new SecurityUtils();
@@ -195,8 +217,8 @@ public class MainApp extends MultiDexApplication implements
             }
         }
 
-        initSyncOperations();
-        initContactsBackup();
+        initSyncOperations(accountManager);
+        initContactsBackup(accountManager);
         notificationChannels();
 
 
@@ -256,9 +278,9 @@ public class MainApp extends MultiDexApplication implements
         });
     }
 
-    public static void initContactsBackup() {
+    public static void initContactsBackup(UserAccountManager accountManager) {
         ArbitraryDataProvider arbitraryDataProvider = new ArbitraryDataProvider(mContext.getContentResolver());
-        Account[] accounts = AccountUtils.getAccounts(mContext);
+        Account[] accounts = accountManager.getAccounts();
 
         for (Account account : accounts) {
             if (arbitraryDataProvider.getBooleanValue(account, PREFERENCE_CONTACTS_AUTOMATIC_BACKUP)) {
@@ -320,7 +342,7 @@ public class MainApp extends MultiDexApplication implements
         }
     }
 
-    public static void initSyncOperations() {
+    public static void initSyncOperations(UserAccountManager accountManager) {
         updateToAutoUpload();
         cleanOldEntries();
         updateAutoUploadEntries();
@@ -330,7 +352,7 @@ public class MainApp extends MultiDexApplication implements
                     Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
                 splitOutAutoUploadEntries();
             } else {
-                AppPreferences preferences = PreferenceManager.fromContext(getAppContext());
+                AppPreferences preferences = AppPreferencesImpl.fromContext(getAppContext());
                 preferences.setAutoUploadSplitEntriesEnabled(true);
             }
         }
@@ -338,17 +360,18 @@ public class MainApp extends MultiDexApplication implements
         initiateExistingAutoUploadEntries();
 
         FilesSyncHelper.scheduleFilesSyncIfNeeded(mContext);
-        FilesSyncHelper.restartJobsIfNeeded();
+        FilesSyncHelper.restartJobsIfNeeded(accountManager);
         FilesSyncHelper.scheduleOfflineSyncIfNeeded();
 
-        ReceiversHelper.registerNetworkChangeReceiver();
+        ReceiversHelper.registerNetworkChangeReceiver(accountManager);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            ReceiversHelper.registerPowerChangeReceiver();
+            ReceiversHelper.registerPowerChangeReceiver(accountManager
+            );
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            ReceiversHelper.registerPowerSaveReceiver();
+            ReceiversHelper.registerPowerSaveReceiver(accountManager);
         }
     }
 
@@ -537,7 +560,7 @@ public class MainApp extends MultiDexApplication implements
 
     private static void updateToAutoUpload() {
             Context context = getAppContext();
-            AppPreferences preferences = PreferenceManager.fromContext(context);
+            AppPreferences preferences = AppPreferencesImpl.fromContext(context);
             if (preferences.instantPictureUploadEnabled() || preferences.instantVideoUploadEnabled()){
                 preferences.removeLegacyPreferences();
 
@@ -564,7 +587,7 @@ public class MainApp extends MultiDexApplication implements
     private static void updateAutoUploadEntries() {
         // updates entries to reflect their true paths
         Context context = getAppContext();
-        AppPreferences preferences = PreferenceManager.fromContext(context);
+        AppPreferences preferences = AppPreferencesImpl.fromContext(context);
         if (!preferences.isAutoUploadPathsUpdateEnabled()) {
             SyncedFolderProvider syncedFolderProvider =
                     new SyncedFolderProvider(MainApp.getAppContext().getContentResolver(), preferences);
@@ -574,7 +597,7 @@ public class MainApp extends MultiDexApplication implements
 
     private static void splitOutAutoUploadEntries() {
         Context context = getAppContext();
-        AppPreferences preferences = PreferenceManager.fromContext(context);
+        AppPreferences preferences = AppPreferencesImpl.fromContext(context);
         if (!preferences.isAutoUploadSplitEntriesEnabled()) {
             // magic to split out existing synced folders in two when needed
             // otherwise, we migrate them to their proper type (image or video)
@@ -629,7 +652,7 @@ public class MainApp extends MultiDexApplication implements
 
     private static void initiateExistingAutoUploadEntries() {
         new Thread(() -> {
-            AppPreferences preferences = PreferenceManager.fromContext(getAppContext());
+            AppPreferences preferences = AppPreferencesImpl.fromContext(getAppContext());
             if (!preferences.isAutoUploadInitialized()) {
                 SyncedFolderProvider syncedFolderProvider =
                         new SyncedFolderProvider(MainApp.getAppContext().getContentResolver(), preferences);
@@ -651,7 +674,7 @@ public class MainApp extends MultiDexApplication implements
         // database, and this cleans all that and leaves 1 (newest) entry per synced folder
 
         Context context = getAppContext();
-        AppPreferences preferences = PreferenceManager.fromContext(context);
+        AppPreferences preferences = AppPreferencesImpl.fromContext(context);
 
         if (!preferences.isLegacyClean()) {
             SyncedFolderProvider syncedFolderProvider =
@@ -697,5 +720,15 @@ public class MainApp extends MultiDexApplication implements
     @Override
     public AndroidInjector<Service> serviceInjector() {
         return dispatchingServiceInjector;
+    }
+
+    @Override
+    public AndroidInjector<ContentProvider> contentProviderInjector() {
+        return dispatchingContentProviderInjector;
+    }
+
+    @Override
+    public AndroidInjector<BroadcastReceiver> broadcastReceiverInjector() {
+        return dispatchingBroadcastReceiverInjector;
     }
 }

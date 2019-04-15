@@ -405,6 +405,7 @@ public class AuthenticatorActivity extends AccountAuthenticatorActivity
 
         // show snackbar after 60s to switch back to old login method
         if (showLegacyLogin) {
+            final String finalBaseURL = baseURL;
             new Handler().postDelayed(() -> DisplayUtils.createSnackbar(mLoginWebView,
                                                                         R.string.fallback_weblogin_text,
                                                                         Snackbar.LENGTH_INDEFINITE)
@@ -430,7 +431,11 @@ public class AuthenticatorActivity extends AccountAuthenticatorActivity
 
                     initServerPreFragment(null);
 
-                    mHostUrlInput.setText(baseURL);
+                    if (finalBaseURL != null) {
+                        mHostUrlInput.setText(finalBaseURL.replace(WEB_LOGIN, ""));
+                    } else {
+                        mHostUrlInput.setText(finalBaseURL);
+                    }
 
                     checkOcServer();
                 }).show(), 60 * 1000);
@@ -2410,7 +2415,7 @@ public class AuthenticatorActivity extends AccountAuthenticatorActivity
 
             String result = data.getStringExtra("com.blikoon.qrcodescanner.got_qr_scan_relult");
 
-            if (!result.startsWith(getString(R.string.login_data_own_scheme))) {
+            if (result == null || !result.startsWith(getString(R.string.login_data_own_scheme))) {
                 mServerStatusIcon = R.drawable.ic_alert;
                 mServerStatusText = "QR Code could not be read!";
                 showServerStatus();
